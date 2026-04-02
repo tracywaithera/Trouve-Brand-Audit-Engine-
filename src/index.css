@@ -1,0 +1,43 @@
+@import "tailwindcss";
+
+@theme {
+  --font-serif: "DM Serif Display", serif;
+  --font-sans: "DM Sans", sans-serif;
+  
+  --color-paper: #FAF9F6;
+  --color-paper-2: #F2F0EB;
+  --color-paper-3: #E8E4DC;
+  --color-ink: #0F0E0C;
+  --color-ink-2: #3A3834;
+  --color-ink-3: #7A7670;
+  --color-gold: #B8934A;
+  --color-gold-2: #D4AA6A;
+  --color-gold-l: #F5ECD8;
+  --color-teal: #1A6B5A;
+  --color-teal-2: #24826E;
+  --color-teal-l: #E0F0EC;
+  --color-red-custom: #C0392B;
+}
+
+@layer base {
+  body {
+    @apply bg-paper text-ink font-sans font-medium antialiased selection:bg-gold/20;
+  }
+  
+  h1, h2, h3, .font-serif {
+    @apply font-serif tracking-tight;
+  }
+
+  ::selection {
+    @apply bg-gold/20 text-ink;
+  }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.animate-spin-custom {
+  animation: spin 1s linear infinite;
+}
+
