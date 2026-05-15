@@ -1,4 +1,7 @@
 import { useState, useEffect } from 'react';
+import { onAuthStateChanged, User } from 'firebase/auth';
+import { collection, query, where, orderBy, onSnapshot, addDoc, serverTimestamp, setDoc, doc, getDoc, deleteDoc } from 'firebase/firestore';
+import { auth, signInWithGoogle, logout, db, handleFirestoreError, OperationType } from './lib/firebase';
 import { Header } from './components/Header';
 import { Home } from './components/Home';
 import { IntakeForm } from './components/IntakeForm';
@@ -16,6 +19,7 @@ const STORAGE_KEY = 'trouve_audit_session';
 const HISTORY_KEY = 'trouve_audit_history';
 
 export default function App() {
+  const [user, setUser] = useState<User | null>(null);
   const [screen, setScreen] = useState<Screen>('home');
   const [brandType, setBrandType] = useState<BrandType | null>(null);
   const [userData, setUserData] = useState<UserData | null>(null);
@@ -24,24 +28,51 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [isLoaded, setIsLoaded] = useState(false);
 
-  // Load from memory
+  // Auth listener
+  useEffect(() => {
+    return onAuthStateChanged(auth, (u) => {
+      setUser(u);
+      if (!u) {
+        setHistory([]);
+      }
+    });
+  }, []);
+
+  // Sync history with Firestore
+  useEffect(() => {
+    if (!user) return;
+
+    const q = query(
+      collection(db, 'audits'),
+      where('userId', '==', user.uid),
+      orderBy('timestamp', 'desc')
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const audits = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        // Convert Firestore timestamp to ISO string for compatibility with existing types
+        timestamp: doc.data().timestamp?.toDate().toISOString() || new Date().toISOString()
+      })) as SavedAudit[];
+      setHistory(audits);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'audits');
+    });
+
+    return unsubscribe;
+  }, [user]);
+
+  // Load from memory (keeping session data but history now comes from Firestore)
   useEffect(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
-    const savedHistory = localStorage.getItem(HISTORY_KEY);
-
-    if (savedHistory) {
-      try {
-        setHistory(JSON.parse(savedHistory));
-      } catch (e) {
-        console.error('Failed to load history:', e);
-      }
-    }
+    // HISTORY_KEY is deprecated now as we use Firestore
 
     if (saved) {
       try {
         const { screen: savedScreen, brandType: savedType, userData: savedUser, auditData: savedAudit } = JSON.parse(saved);
         setBrandType(savedType);
-        setUserData(savedUser);
+        setUserData(savedUser ? { ...savedUser, tier: savedUser.tier || 'free' } : null);
         setAuditData(savedAudit);
         // If they were on 'running', put them back on 'intake' to be safe
         setScreen(savedScreen === 'running' ? 'intake' : savedScreen);
@@ -52,13 +83,20 @@ export default function App() {
     setIsLoaded(true);
   }, []);
 
-  // Save to memory
+  // Save to memory (session only)
   useEffect(() => {
     if (isLoaded) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ screen, brandType, userData, auditData }));
-      localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
     }
-  }, [screen, brandType, userData, auditData, history, isLoaded]);
+  }, [screen, brandType, userData, auditData, isLoaded]);
+
+  const handleLogin = async () => {
+    try {
+      await signInWithGoogle();
+    } catch (err) {
+      setError('Login failed. Please try again.');
+    }
+  };
 
   const handleSelectType = (type: BrandType) => {
     setBrandType(type);
@@ -74,14 +112,16 @@ export default function App() {
       const result = await generateBrandAudit(data);
       setAuditData(result);
       
-      // Add to history
-      const newAudit: SavedAudit = {
-        id: crypto.randomUUID(),
-        userData: data,
-        auditData: result,
-        timestamp: new Date().toISOString()
-      };
-      setHistory(prev => [newAudit, ...prev]);
+      // Save to Firestore ONLY if user is logged in
+      if (user) {
+        const auditPayload = {
+          userId: user.uid,
+          userData: data,
+          auditData: result,
+          timestamp: serverTimestamp()
+        };
+        await addDoc(collection(db, 'audits'), auditPayload);
+      }
       
       setScreen('report');
     } catch (err) {
@@ -108,8 +148,22 @@ export default function App() {
     setScreen('history');
   };
 
-  const handleDeleteAudit = (id: string) => {
-    setHistory(prev => prev.filter(item => item.id !== id));
+  const handleLogout = async () => {
+    try {
+      await logout();
+      handleReset();
+    } catch (err) {
+      setError('Logout failed.');
+    }
+  };
+
+  const handleDeleteAudit = async (id: string) => {
+    if (!user) return;
+    try {
+      await deleteDoc(doc(db, 'audits', id));
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `audits/${id}`);
+    }
   };
 
   const handleViewAudit = (audit: SavedAudit) => {
@@ -123,7 +177,13 @@ export default function App() {
 
   return (
     <div className="min-h-screen flex flex-col">
-      <Header onHistoryClick={handleViewHistory} onEngineClick={handleReset} />
+      <Header 
+        onHistoryClick={handleViewHistory} 
+        onEngineClick={handleReset} 
+        user={user}
+        onLogin={handleLogin}
+        onLogout={handleLogout}
+      />
       
       <main className="flex-grow">
         {screen === 'home' && (
@@ -131,6 +191,8 @@ export default function App() {
             onSelectType={handleSelectType} 
             onViewHistory={handleViewHistory}
             hasHistory={history.length > 0}
+            user={user}
+            onLogin={handleLogin}
           />
         )}
         
@@ -185,7 +247,11 @@ export default function App() {
         </div>
       )}
 
-      <TrouveBot />
+      <TrouveBot 
+        user={user} 
+        auditData={auditData} 
+        userData={userData} 
+      />
 
       <footer className="py-12 px-6 text-center border-t border-ink/5 bg-paper-2">
         <div className="max-w-4xl mx-auto">
@@ -194,12 +260,12 @@ export default function App() {
           </p>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4 sm:gap-8">
             <a 
-              href="https://trouve-ai-marketing.vercel.app/" 
+              href="https://trouvemarketingsolutions.com/" 
               target="_blank" 
               rel="noopener noreferrer"
               className="text-xs text-gold hover:text-gold-2 font-bold transition-colors"
             >
-              Visit our website: trouve-ai-marketing.vercel.app
+              Visit our website: trouvemarketingsolutions.com
             </a>
             <button 
               onClick={handleReset}

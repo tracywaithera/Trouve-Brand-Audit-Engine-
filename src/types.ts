@@ -4,6 +4,30 @@ export interface ChatMessage {
 }
 
 export type BrandType = 'personal' | 'faceless' | 'business';
+export type UserTier = 'free' | 'pro';
+
+export interface CanvasBlock {
+  title: string;
+  items: string[];
+}
+
+export interface BrandCanvas {
+  purpose: CanvasBlock;
+  identity: CanvasBlock;
+  tone: CanvasBlock;
+  visuals: CanvasBlock;
+  positioning: CanvasBlock;
+  promise: CanvasBlock;
+}
+
+export interface BusinessCanvas {
+  valueProps: CanvasBlock;
+  customerSegments: CanvasBlock;
+  channels: CanvasBlock;
+  revenueStreams: CanvasBlock;
+  keyActivities: CanvasBlock;
+  costStructure: CanvasBlock;
+}
 
 export interface AuditSection {
   title: string;
@@ -19,6 +43,8 @@ export interface AuditData {
   score_label: string;
   executive_summary: string;
   sections: AuditSection[];
+  brand_canvas?: BrandCanvas;
+  business_canvas?: BusinessCanvas;
 }
 
 export interface UserData {
@@ -28,6 +54,7 @@ export interface UserData {
   brandType: BrandType;
   brandName: string;
   challenge: string;
+  tier: UserTier;
   // Personal specific
   role?: string;
   audience?: string;
@@ -42,6 +69,8 @@ export interface UserData {
   // Common
   link?: string;
   needDomain?: string;
+  competitors?: string;
+  tone?: string;
   ts: string;
 }
 

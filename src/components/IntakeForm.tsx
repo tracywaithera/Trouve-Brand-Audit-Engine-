@@ -13,6 +13,7 @@ interface IntakeFormProps {
 export const IntakeForm: React.FC<IntakeFormProps> = ({ brandType, onBack, onSubmit, initialData }) => {
   const [formData, setFormData] = useState<Partial<UserData>>({
     brandType,
+    tier: 'free',
     name: initialData?.name || '',
     phone: initialData?.phone || '',
     brandName: initialData?.brandName || '',
@@ -27,6 +28,8 @@ export const IntakeForm: React.FC<IntakeFormProps> = ({ brandType, onBack, onSub
     budget: initialData?.budget || '',
     link: initialData?.link || '',
     needDomain: initialData?.needDomain || '',
+    competitors: initialData?.competitors || '',
+    tone: initialData?.tone || '',
   });
 
   const [error, setError] = useState<string | null>(null);
@@ -279,6 +282,35 @@ export const IntakeForm: React.FC<IntakeFormProps> = ({ brandType, onBack, onSub
               <option value="yes">Yes, I need one</option>
               <option value="no">No, I already have one</option>
               <option value="not_sure">I'm not sure yet</option>
+            </select>
+          </div>
+
+          <div className="space-y-2">
+            <label className="block text-xs font-bold tracking-widest uppercase text-ink">Biggest Competitors (Top 1-3)</label>
+            <input 
+              name="competitors"
+              value={formData.competitors}
+              onChange={handleChange}
+              placeholder="e.g. Acme Corp, Brand X..."
+              className="w-full px-5 py-4 text-base font-medium bg-white border border-ink/20 rounded-xl outline-none focus:border-gold transition-all placeholder:text-ink/30"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <label className="block text-xs font-bold tracking-widest uppercase text-ink">Your Desired Tone of Voice</label>
+            <select 
+              name="tone"
+              value={formData.tone}
+              onChange={handleChange}
+              className="w-full px-5 py-4 text-base font-medium bg-white border border-ink/20 rounded-xl outline-none focus:border-gold transition-all appearance-none cursor-pointer"
+            >
+              <option value="">Select tone</option>
+              <option>Sharp & Sophisticated</option>
+              <option>Witty & Bold</option>
+              <option>Minimalist & Technical</option>
+              <option>Warm & Relatable</option>
+              <option>Professional & Authoritative</option>
+              <option>Disruptive & Radical</option>
             </select>
           </div>
 

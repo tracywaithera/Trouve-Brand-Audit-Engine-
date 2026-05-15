@@ -1,11 +1,33 @@
-import { GoogleGenAI, Type, GenerateContentResponse } from "@google/genai";
+import { GoogleGenAI, Type, GenerateContentResponse, Modality } from "@google/genai";
 import { UserData, AuditData, ChatMessage } from "../types";
 import { AUDIT_SECTIONS } from "../constants";
 
-export async function chatWithTrouve(messages: ChatMessage[]): Promise<string> {
+export async function generateTTS(text: string): Promise<string> {
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
   
-  const systemInstruction = `
+  const response = await ai.models.generateContent({
+    model: "gemini-3.1-flash-tts-preview",
+    contents: [{ parts: [{ text: `Say this professionally and with authority: ${text}` }] }],
+    config: {
+      responseModalities: [Modality.AUDIO],
+      speechConfig: {
+        voiceConfig: {
+          prebuiltVoiceConfig: { voiceName: 'Kore' },
+        },
+      },
+    },
+  });
+
+  const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+  if (!base64Audio) throw new Error("No audio generated");
+  
+  return base64Audio;
+}
+
+export async function chatWithTrouve(messages: ChatMessage[], auditContext?: { audit: AuditData; user: UserData }): Promise<string> {
+  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  
+  let systemInstruction = `
     You are "Trouve", a smart, sophisticated AI brand strategist and marketing expert at Trouve Marketing Solutions, founded by Tracy Waithera in Nairobi.
     
     YOUR EXPERTISE:
@@ -30,6 +52,25 @@ export async function chatWithTrouve(messages: ChatMessage[]): Promise<string> {
     
     Keep responses concise but high-value. Use formatting (bolding, lists) to make advice readable.
   `;
+
+  if (auditContext) {
+    systemInstruction += `
+      
+      CURRENT AUDIT CONTEXT:
+      You have access to the user's latest brand audit.
+      Brand Name: ${auditContext.user.brandName}
+      Brand Type: ${auditContext.user.brandType}
+      Overall Score: ${auditContext.audit.overall_score}/100 (${auditContext.audit.score_label})
+      Challenges: ${auditContext.user.challenge}
+      
+      Summary: ${auditContext.audit.executive_summary}
+      
+      When the user asks questions about their audit, reference specific findings or actions from these sections:
+      ${auditContext.audit.sections.map(s => `- ${s.title}: ${s.finding}`).join('\n')}
+      
+      Encourage them to book a strategy session with Tracy if they need deep implementation.
+    `;
+  }
 
   const chat = ai.chats.create({
     model: "gemini-3.1-pro-preview",
@@ -82,9 +123,9 @@ export async function generateBrandAudit(userData: UserData): Promise<AuditData>
   const sections = AUDIT_SECTIONS[userData.brandType];
 
   const promptContext = {
-    personal: `This is a PERSONAL BRAND audit. The person IS the brand. Focus on: authority signals, thought leadership positioning, content-to-trust pipeline, personal story leverage, niche clarity, and whether they are differentiated or commoditised. Name: ${userData.brandName}. Role: ${userData.role}. Target audience: ${userData.audience || 'Not specified'}. Platforms: ${userData.platforms || 'Not specified'}. Link: ${userData.link || 'Not provided'}.`,
-    faceless: `This is a FACELESS brand audit — no visible founder. Focus on: content consistency, niche authority without a face, audience trust building, monetisation readiness, content-to-revenue conversion, and platform algorithm alignment. Brand: ${userData.brandName}. Niche: ${userData.niche || 'Not specified'}. Primary platform: ${userData.platforms || 'Not specified'}. Monetisation: ${userData.monetise || 'Not specified'}. Link: ${userData.link || 'Not provided'}.`,
-    business: `This is a BUSINESS BRAND audit. Focus on: digital presence strength, content quality, market positioning (commodity vs category leader), audience conversion gaps, ad readiness, and brand consistency. Business: ${userData.brandName}. Industry: ${userData.industry}. Team: ${userData.teamSize || 'Not specified'}. Marketing budget: ${userData.budget || 'Not specified'}. Link: ${userData.link || 'Not provided'}.`
+    personal: `This is a PERSONAL BRAND audit. The person IS the brand. Focus on: authority signals, thought leadership positioning, content-to-trust pipeline, personal story leverage, niche clarity, and whether they are differentiated or commoditised. Name: ${userData.brandName}. Role: ${userData.role}. Target audience: ${userData.audience || 'Not specified'}. Platforms: ${userData.platforms || 'Not specified'}. Link: ${userData.link || 'Not provided'}. Competitors: ${userData.competitors || 'None provided'}. Desired Tone: ${userData.tone || 'Professional'}.`,
+    faceless: `This is a FACELESS brand audit — no visible founder. Focus on: content consistency, niche authority without a face, audience trust building, monetisation readiness, content-to-revenue conversion, and platform algorithm alignment. Brand: ${userData.brandName}. Niche: ${userData.niche || 'Not specified'}. Primary platform: ${userData.platforms || 'Not specified'}. Monetisation: ${userData.monetise || 'Not specified'}. Link: ${userData.link || 'Not provided'}. Competitors: ${userData.competitors || 'None provided'}. Desired Tone: ${userData.tone || 'Professional'}.`,
+    business: `This is a BUSINESS BRAND audit. Focus on: digital presence strength, content quality, market positioning (commodity vs category leader), audience conversion gaps, ad readiness, and brand consistency. Business: ${userData.brandName}. Industry: ${userData.industry}. Team: ${userData.teamSize || 'Not specified'}. Marketing budget: ${userData.budget || 'Not specified'}. Link: ${userData.link || 'Not provided'}. Competitors: ${userData.competitors || 'None provided'}. Desired Tone: ${userData.tone || 'Professional'}.`
   };
 
   const prompt = `
@@ -98,17 +139,31 @@ export async function generateBrandAudit(userData: UserData): Promise<AuditData>
     Contact: ${userData.name}
 
     YOUR TASK:
-    Generate a comprehensive brand audit that includes:
-    1. Market Research: Analyze the current state of their specific niche/industry in the African context.
-    2. Competitor Analysis: Identify what competitors are doing and where the gaps are.
-    3. Differentiation (How to Stand Out): Provide specific strategies to become a category of one.
-    4. Visibility & Growth: Actionable steps to increase reach and authority.
+    Generate a high-level, comprehensive brand audit. This must be the "Full Strategic Audit" — don't hold back on depth or complexity.
+    Include for each of the following sections (${sections.join(', ')}):
+    1. Market Research: Deep analysis of their industry in the specifically African landscape (mentioning specific markets if applicable like Kenya, Nigeria, South Africa).
+    2. Competitor Benchmarking: How they stack up against specific local and global competitors (${userData.competitors || 'general industry leaders'}).
+    3. Strategic Differentiation: How to create an 'unfair advantage' and a category of one.
+    4. Operational Roadmap: Tactical steps for the next 90 days.
 
-    Reference their challenge directly in at least two sections. Use sophisticated yet clear language. Be direct and bold. Be specific to the African market. If they need a domain (${userData.needDomain}), explain why a professional domain matters.
+    GUIDELINES:
+    - Use the provided brand context extensively.
+    - Reference their challenge ("${userData.challenge}") throughout the audit as the primary friction point to solve.
+    - If they requested a domain (${userData.needDomain}), include a tactical recommendation on domain selection and TLD strategy (e.g. .com vs .ke).
+    - Tone of Voice: Use their requested tone: "${userData.tone || 'Professional & Authoritative'}".
+    - The 'analysis' field must be a masterclass in strategy (4-6 detailed sentences).
+    - Total depth is key. This is a premium product experience.
     
-    The 'analysis' field for each section should be at least 3-4 sentences of deep, strategic insight.
-    The 'finding' should be a punchy, high-level strategic observation.
-    The 'action' should be a concrete, multi-step implementation plan.
+    STRUCTURE:
+    - overall_score: 0-100 reflecting the current brand maturity.
+    - score_label: Foundational, Developing, Competitive, Authority, or Market Leader.
+    - executive_summary: A 150-word high-impact narrative summary.
+    - sections: Detailed audit for each of these: ${sections.join(', ')}.
+    
+    CANVAS BOARDS:
+    1. 'Brand Canvas': Purpose, Identity, Tone, Visuals, Positioning, and Promise.
+    2. 'Business Canvas': Value Proposition, Customer Segments, Channels, Revenue Streams, Key Activities, and Cost Structure.
+    Each canvas item must be a detailed phrase, not just a single word.
   `;
 
   const response = await ai.models.generateContent({
@@ -136,9 +191,31 @@ export async function generateBrandAudit(userData: UserData): Promise<AuditData>
               },
               required: ["title", "analysis", "finding", "action"]
             }
+          },
+          brand_canvas: {
+            type: Type.OBJECT,
+            properties: {
+              purpose: { type: Type.OBJECT, properties: { title: { type: Type.STRING }, items: { type: Type.ARRAY, items: { type: Type.STRING } } } },
+              identity: { type: Type.OBJECT, properties: { title: { type: Type.STRING }, items: { type: Type.ARRAY, items: { type: Type.STRING } } } },
+              tone: { type: Type.OBJECT, properties: { title: { type: Type.STRING }, items: { type: Type.ARRAY, items: { type: Type.STRING } } } },
+              visuals: { type: Type.OBJECT, properties: { title: { type: Type.STRING }, items: { type: Type.ARRAY, items: { type: Type.STRING } } } },
+              positioning: { type: Type.OBJECT, properties: { title: { type: Type.STRING }, items: { type: Type.ARRAY, items: { type: Type.STRING } } } },
+              promise: { type: Type.OBJECT, properties: { title: { type: Type.STRING }, items: { type: Type.ARRAY, items: { type: Type.STRING } } } }
+            }
+          },
+          business_canvas: {
+            type: Type.OBJECT,
+            properties: {
+              valueProps: { type: Type.OBJECT, properties: { title: { type: Type.STRING }, items: { type: Type.ARRAY, items: { type: Type.STRING } } } },
+              customerSegments: { type: Type.OBJECT, properties: { title: { type: Type.STRING }, items: { type: Type.ARRAY, items: { type: Type.STRING } } } },
+              channels: { type: Type.OBJECT, properties: { title: { type: Type.STRING }, items: { type: Type.ARRAY, items: { type: Type.STRING } } } },
+              revenueStreams: { type: Type.OBJECT, properties: { title: { type: Type.STRING }, items: { type: Type.ARRAY, items: { type: Type.STRING } } } },
+              keyActivities: { type: Type.OBJECT, properties: { title: { type: Type.STRING }, items: { type: Type.ARRAY, items: { type: Type.STRING } } } },
+              costStructure: { type: Type.OBJECT, properties: { title: { type: Type.STRING }, items: { type: Type.ARRAY, items: { type: Type.STRING } } } }
+            }
           }
         },
-        required: ["overall_score", "score_label", "executive_summary", "sections"]
+        required: ["overall_score", "score_label", "executive_summary", "sections", "brand_canvas", "business_canvas"]
       }
     }
   });

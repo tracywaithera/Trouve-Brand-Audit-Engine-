@@ -1,18 +1,60 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Send, Bot, Sparkles, Minus } from 'lucide-react';
+import { X, Send, Bot, Sparkles, Minus, Mic, Volume2, Square, Loader2, Trash2, Copy, Check } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
-import { chatWithTrouve } from '../services/gemini';
+import { chatWithTrouve, generateTTS } from '../services/gemini';
 import { ChatMessage } from '../types';
+import { User as FirebaseUser } from 'firebase/auth';
+import { collection, addDoc, serverTimestamp, query, where, orderBy, onSnapshot, doc, getDocs, writeBatch, limit } from 'firebase/firestore';
+import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { AuditData, UserData } from '../types';
 
-export const TrouveBot: React.FC = () => {
+interface TrouveBotProps {
+  user: FirebaseUser | null;
+  auditData: AuditData | null;
+  userData: UserData | null;
+}
+
+export const TrouveBot: React.FC<TrouveBotProps> = ({ user, auditData, userData }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([
-    { role: 'model', text: "Hello! I'm **Trouve**, your AI brand strategist. How can I help you grow your brand today?" }
+    { role: 'model', text: "Hello! I'm **Trouve**, your AI brand strategist. I specialize in **Personal**, **Faceless**, and **Business** brands. How can I help you grow today?" }
   ]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState<number | null>(null);
+  const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const recognitionRef = useRef<any>(null);
+
+  // Sync with Firestore history if logged in
+  useEffect(() => {
+    if (!user || !isOpen) return;
+
+    const q = query(
+      collection(db, 'chats'),
+      where('userId', '==', user.uid),
+      orderBy('timestamp', 'asc'),
+      limit(50)
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      if (!snapshot.empty) {
+        const historyMessages = snapshot.docs.map(doc => ({
+          role: doc.data().role as 'user' | 'model',
+          text: doc.data().text
+        }));
+        // If there's history, use it. Otherwise keep the welcome message.
+        setMessages(historyMessages);
+      }
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'chats');
+    });
+
+    return unsubscribe;
+  }, [user, isOpen]);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -20,28 +62,166 @@ export const TrouveBot: React.FC = () => {
     }
   }, [messages]);
 
-  const handleSend = async () => {
-    if (!input.trim() || isLoading) return;
+  const handleSend = async (messageText?: string) => {
+    const text = messageText || input;
+    if (!text.trim() || isLoading) return;
 
-    const userMessage: ChatMessage = { role: 'user', text: input };
-    const newMessages = [...messages, userMessage];
-    setMessages(newMessages);
+    const userMessage: ChatMessage = { role: 'user', text: text };
+    const newHistory = [...messages, userMessage];
+    setMessages(newHistory);
     setInput('');
     setIsLoading(true);
 
+    // Save user message to Firestore
+    if (user) {
+      try {
+        await addDoc(collection(db, 'chats'), {
+          userId: user.uid,
+          role: 'user',
+          text: text,
+          timestamp: serverTimestamp()
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.CREATE, 'chats');
+      }
+    }
+
     try {
-      const response = await chatWithTrouve(newMessages);
-      setMessages([...newMessages, { role: 'model', text: response }]);
+      const auditContext = (auditData && userData) ? { audit: auditData, user: userData } : undefined;
+      const response = await chatWithTrouve(newHistory, auditContext);
+      const modelMessage: ChatMessage = { role: 'model', text: response };
+      setMessages([...newHistory, modelMessage]);
+
+      // Save model message to Firestore
+      if (user) {
+        await addDoc(collection(db, 'chats'), {
+          userId: user.uid,
+          role: 'model',
+          text: response,
+          timestamp: serverTimestamp()
+        });
+      }
     } catch (error) {
       console.error("Chat error:", error);
-      setMessages([...newMessages, { role: 'model', text: "I'm sorry, I'm having trouble connecting right now. Please try again later." }]);
+      const errorMessage: ChatMessage = { role: 'model', text: "I'm sorry, I'm having trouble connecting right now. Please try again later." };
+      setMessages([...newHistory, errorMessage]);
     } finally {
       setIsLoading(false);
     }
   };
 
+  const handleClearChat = async () => {
+    if (window.confirm("Are you sure you want to clear your chat history?")) {
+      if (user) {
+        try {
+          const q = query(collection(db, 'chats'), where('userId', '==', user.uid));
+          const snapshot = await getDocs(q);
+          const batch = writeBatch(db);
+          snapshot.docs.forEach(d => batch.delete(d.ref));
+          await batch.commit();
+        } catch (err) {
+          handleFirestoreError(err, OperationType.DELETE, 'chats');
+        }
+      }
+      setMessages([{ role: 'model', text: "Hello! Chat cleared. How can I help you today?" }]);
+    }
+  };
+
+  const handleCopy = (text: string, index: number) => {
+    navigator.clipboard.writeText(text);
+    setCopiedIndex(index);
+    setTimeout(() => setCopiedIndex(null), 2000);
+  };
+
+  const toggleListen = () => {
+    if (isListening) {
+      recognitionRef.current?.stop();
+      setIsListening(false);
+      return;
+    }
+
+    // Stop speaking if active
+    if (isSpeaking !== null) {
+      audioRef.current?.pause();
+      setIsSpeaking(null);
+    }
+
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert("Speech recognition is not supported in your browser.");
+      return;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognitionRef.current = recognition;
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.lang = 'en-US';
+
+    recognition.onstart = () => {
+      setIsListening(true);
+    };
+
+    recognition.onresult = (event: any) => {
+      const transcript = event.results[0][0].transcript;
+      if (transcript) {
+        setInput(transcript);
+      }
+    };
+
+    recognition.onerror = (event: any) => {
+      console.error("Speech Recognition Error", event.error);
+      setIsListening(false);
+      if (event.error === 'not-allowed') {
+        alert("Microphone access was denied. Please allow microphone permissions in your browser settings to use voice features.");
+      }
+    };
+
+    recognition.onend = () => {
+      setIsListening(false);
+      recognitionRef.current = null;
+    };
+
+    recognition.start();
+  };
+
+  const speakText = async (text: string, index: number) => {
+    if (isSpeaking === index) {
+      audioRef.current?.pause();
+      setIsSpeaking(null);
+      return;
+    }
+
+    // Stop listening if active
+    if (isListening) {
+      recognitionRef.current?.stop();
+      setIsListening(false);
+    }
+
+    setIsSpeaking(index);
+    try {
+      const base64Audio = await generateTTS(text);
+      const audioUrl = `data:audio/mp3;base64,${base64Audio}`;
+      
+      if (audioRef.current) {
+        audioRef.current.src = audioUrl;
+        audioRef.current.play();
+        audioRef.current.onended = () => setIsSpeaking(null);
+      } else {
+        const audio = new Audio(audioUrl);
+        audioRef.current = audio;
+        audio.play();
+        audio.onended = () => setIsSpeaking(null);
+      }
+    } catch (error) {
+      console.error("TTS error:", error);
+      setIsSpeaking(null);
+    }
+  };
+
   return (
     <div className="fixed top-0 right-4 z-50 pointer-events-none">
+      {/* ... Bot Hanging Part remains same ... */}
       {/* The Hanging Bot */}
       <motion.div
         initial={{ y: -200 }}
@@ -109,12 +289,21 @@ export const TrouveBot: React.FC = () => {
                   <div className="text-[10px] text-white/60">Brand Strategist</div>
                 </div>
               </div>
-              <button 
-                onClick={() => setIsOpen(false)}
-                className="p-2 hover:bg-white/10 rounded-full transition-colors"
-              >
-                <X className="w-4 h-4" />
-              </button>
+              <div className="flex items-center gap-1">
+                <button 
+                  onClick={handleClearChat}
+                  className="p-2 hover:bg-white/10 rounded-full transition-colors text-white/60 hover:text-white"
+                  title="Clear Chat"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+                <button 
+                  onClick={() => setIsOpen(false)}
+                  className="p-2 hover:bg-white/10 rounded-full transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
             </div>
 
             {/* Messages */}
@@ -125,9 +314,9 @@ export const TrouveBot: React.FC = () => {
               {messages.map((msg, i) => (
                 <div 
                   key={i} 
-                  className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                  className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
                 >
-                  <div className={`max-w-[85%] p-3 rounded-2xl text-sm ${
+                  <div className={`max-w-[85%] p-3 rounded-2xl text-sm relative group ${
                     msg.role === 'user' 
                       ? 'bg-ink text-white rounded-tr-none' 
                       : 'bg-white border border-ink/5 text-ink rounded-tl-none shadow-sm'
@@ -137,6 +326,25 @@ export const TrouveBot: React.FC = () => {
                         {msg.text}
                       </ReactMarkdown>
                     </div>
+                    
+                    {msg.role === 'model' && (
+                      <div className="absolute -right-8 bottom-0 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                        <button 
+                          onClick={() => speakText(msg.text, i)}
+                          className={`p-1.5 rounded-full bg-white border border-ink/10 text-ink shadow-sm hover:text-gold hover:border-gold ${isSpeaking === i ? 'opacity-100 text-gold border-gold' : ''}`}
+                          title="Listen to response"
+                        >
+                          {isSpeaking === i ? <Square className="w-3 h-3 fill-gold" /> : <Volume2 className="w-3 h-3" />}
+                        </button>
+                        <button 
+                          onClick={() => handleCopy(msg.text, i)}
+                          className={`p-1.5 rounded-full bg-white border border-ink/10 text-ink shadow-sm hover:text-gold hover:border-gold ${copiedIndex === i ? 'text-green-500 border-green-500' : ''}`}
+                          title="Copy text"
+                        >
+                          {copiedIndex === i ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
@@ -153,19 +361,33 @@ export const TrouveBot: React.FC = () => {
 
             {/* Input */}
             <div className="p-4 border-t border-ink/5 bg-white">
-              <div className="relative flex items-center">
-                <input 
-                  type="text"
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-                  placeholder="Ask about branding, marketing..."
-                  className="w-full pl-4 pr-12 py-3 bg-paper-2 border border-ink/10 rounded-xl outline-none focus:border-gold transition-all text-sm"
-                />
+              <div className="relative flex items-center gap-2">
+                <div className="relative flex-1">
+                  <input 
+                    type="text"
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+                    placeholder="Ask about branding, marketing..."
+                    className="w-full pl-4 pr-10 py-3 bg-paper-2 border border-ink/10 rounded-xl outline-none focus:border-gold transition-all text-sm"
+                  />
+                  <button 
+                    onClick={toggleListen}
+                    className={`absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-lg transition-all ${isListening ? 'text-red-500 bg-red-100' : 'text-ink-3 hover:text-ink'}`}
+                  >
+                    {isListening ? (
+                      <motion.div animate={{ scale: [1, 1.2, 1] }} transition={{ repeat: Infinity, duration: 1 }}>
+                        <Mic className="w-4 h-4" />
+                      </motion.div>
+                    ) : (
+                      <Mic className="w-4 h-4" />
+                    )}
+                  </button>
+                </div>
                 <button 
-                  onClick={handleSend}
+                  onClick={() => handleSend()}
                   disabled={!input.trim() || isLoading}
-                  className="absolute right-2 p-2 bg-ink text-white rounded-lg hover:bg-ink-2 transition-all disabled:opacity-50"
+                  className="p-3 bg-ink text-white rounded-xl hover:bg-ink-2 transition-all disabled:opacity-50"
                 >
                   <Send className="w-4 h-4" />
                 </button>

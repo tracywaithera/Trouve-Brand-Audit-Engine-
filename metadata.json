@@ -1,5 +1,5 @@
 {
   "name": "Trouve AI — Brand Audit Engine",
   "description": "Strategic brand audits for personal, faceless, and business brands.",
-  "requestFramePermissions": []
+  "requestFramePermissions": ["microphone"]
 }

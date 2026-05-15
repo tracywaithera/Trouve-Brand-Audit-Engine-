@@ -1,8 +1,9 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { FileText, Trash2, ArrowRight, Clock, Search, TrendingUp } from 'lucide-react';
+import { FileText, Trash2, ArrowRight, Clock, Search, TrendingUp, Download, RefreshCw } from 'lucide-react';
 import { SavedAudit } from '../types';
 import { BRAND_LABELS } from '../constants';
+import { generateAuditPDF } from '../services/pdfService';
 
 interface HistoryProps {
   history: SavedAudit[];
@@ -14,10 +15,23 @@ interface HistoryProps {
 
 export const History: React.FC<HistoryProps> = ({ history, onView, onDelete, onNewAudit, onViewProgress }) => {
   const [searchTerm, setSearchTerm] = React.useState('');
+  const [downloadingId, setDownloadingId] = React.useState<string | null>(null);
 
-  const filteredHistory = history.filter(item => 
-    item.userData.brandName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    item.userData.name.toLowerCase().includes(searchTerm.toLowerCase())
+  const handleDownload = async (audit: SavedAudit) => {
+    setDownloadingId(audit.id);
+    try {
+      await generateAuditPDF(audit.auditData, audit.userData);
+    } catch (error) {
+      console.error("Failed to download PDF:", error);
+      alert("Failed to generate PDF. Please try again.");
+    } finally {
+      setDownloadingId(null);
+    }
+  };
+
+  const filteredHistory = (history || []).filter(item => 
+    item?.userData?.brandName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    item?.userData?.name?.toLowerCase().includes(searchTerm.toLowerCase())
   ).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
   if (history.length === 0) {
@@ -115,6 +129,19 @@ export const History: React.FC<HistoryProps> = ({ history, onView, onDelete, onN
                 <div className="h-10 w-px bg-ink/10" />
                 
                 <div className="flex items-center gap-2">
+                  <button 
+                    onClick={() => handleDownload(item)}
+                    disabled={downloadingId === item.id}
+                    className="p-2.5 text-ink-3 hover:text-gold hover:bg-gold/10 rounded transition-all disabled:opacity-50"
+                    title="Download PDF"
+                  >
+                    {downloadingId === item.id ? (
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Download className="w-4 h-4" />
+                    )}
+                  </button>
+
                   <button 
                     onClick={() => onView(item)}
                     className="flex items-center gap-2 px-4 py-2.5 bg-ink text-paper text-[10px] font-bold tracking-widest uppercase rounded hover:bg-ink-2 transition-all"

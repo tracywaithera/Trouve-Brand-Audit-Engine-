@@ -1,0 +1,57 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "User profile data and settings.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "tier": { "type": "string", "enum": ["free", "pro"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "tier"]
+    },
+    "Audit": {
+      "title": "Brand Audit",
+      "description": "A generated brand audit report.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "userData": { "type": "object" },
+        "auditData": { "type": "object" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "userData", "auditData", "timestamp"]
+    },
+    "ChatMessage": {
+      "title": "Chat Message",
+      "description": "A single message in the AI chat bot.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "role": { "type": "string", "enum": ["user", "model"] },
+        "text": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "role", "text", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profile information."
+    },
+    "/audits/{auditId}": {
+      "schema": "Audit",
+      "description": "Saved brand audits."
+    },
+    "/chats/{chatId}": {
+      "schema": "ChatMessage",
+      "description": "History of AI chat interactions."
+    }
+  }
+}

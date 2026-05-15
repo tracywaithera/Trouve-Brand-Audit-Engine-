@@ -1,13 +1,18 @@
 import React, { useState } from 'react';
-import { Sparkles, History } from 'lucide-react';
+import { Sparkles, History, LogIn, LogOut, User } from 'lucide-react';
+import { User as FirebaseUser } from 'firebase/auth';
 
 interface HeaderProps {
   onHistoryClick?: () => void;
   onEngineClick?: () => void;
+  user: FirebaseUser | null;
+  onLogin: () => void;
+  onLogout: () => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ onHistoryClick, onEngineClick }) => {
+export const Header: React.FC<HeaderProps> = ({ onHistoryClick, onEngineClick, user, onLogin, onLogout }) => {
   const [imgError, setImgError] = useState(false);
+  const [showUserMenu, setShowUserMenu] = useState(false);
 
   return (
     <header className="sticky top-0 z-50 flex items-center justify-between px-6 py-4 bg-paper border-b border-ink/10 md:px-10">
@@ -36,7 +41,7 @@ export const Header: React.FC<HeaderProps> = ({ onHistoryClick, onEngineClick })
       </div>
       
       <div className="flex items-center gap-4">
-        {onHistoryClick && (
+        {onHistoryClick && user && (
           <button 
             onClick={onHistoryClick}
             className="flex items-center gap-2 px-3 py-1.5 text-[11px] font-bold tracking-widest uppercase text-ink-3 hover:text-ink transition-colors"
@@ -45,12 +50,14 @@ export const Header: React.FC<HeaderProps> = ({ onHistoryClick, onEngineClick })
             <span className="hidden sm:inline">History</span>
           </button>
         )}
+        
         <button 
           onClick={onEngineClick}
-          className="flex items-center gap-2 px-4 py-1.5 text-[11px] font-bold tracking-widest uppercase border rounded-full border-ink/20 text-ink hover:bg-paper-2 hover:border-gold transition-all shadow-sm active:scale-95"
+          className="flex items-center gap-2 px-4 py-1.5 text-[11px] font-bold tracking-widest uppercase bg-ink text-white rounded-full hover:bg-ink-2 transition-all shadow-sm active:scale-95"
         >
           <Sparkles className="w-3 h-3 text-gold" />
-          Brand Audit Engine
+          <span className="hidden sm:inline">New Audit</span>
+          <span className="sm:hidden">New</span>
         </button>
       </div>
     </header>

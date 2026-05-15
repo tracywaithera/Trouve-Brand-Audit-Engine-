@@ -2,7 +2,8 @@ import React from 'react';
 import { motion } from 'motion/react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { SavedAudit } from '../types';
-import { ArrowLeft, TrendingUp, Calendar } from 'lucide-react';
+import { ArrowLeft, TrendingUp, Calendar, Download, RefreshCw } from 'lucide-react';
+import { generateAuditPDF } from '../services/pdfService';
 
 interface BrandProgressProps {
   history: SavedAudit[];
@@ -10,17 +11,31 @@ interface BrandProgressProps {
 }
 
 export const BrandProgress: React.FC<BrandProgressProps> = ({ history, onBack }) => {
-  const data = history
+  const [isDownloading, setIsDownloading] = React.useState(false);
+
+  const handleDownloadLatest = async () => {
+    if (history.length === 0) return;
+    setIsDownloading(true);
+    try {
+      await generateAuditPDF(history[0].auditData, history[0].userData);
+    } catch (error) {
+      console.error("Failed to download PDF:", error);
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
+  const data = (history || [])
     .slice()
     .reverse()
     .map(audit => ({
       date: new Date(audit.timestamp).toLocaleDateString('en-KE', { day: 'numeric', month: 'short' }),
-      score: audit.auditData.overall_score,
-      brandName: audit.userData.brandName
+      score: audit?.auditData?.overall_score || 0,
+      brandName: audit?.userData?.brandName || 'Unknown'
     }));
 
-  const latestScore = history[0]?.auditData.overall_score || 0;
-  const previousScore = history[1]?.auditData.overall_score || 0;
+  const latestScore = history[0]?.auditData?.overall_score || 0;
+  const previousScore = history[1]?.auditData?.overall_score || 0;
   const diff = latestScore - previousScore;
 
   return (
@@ -43,6 +58,14 @@ export const BrandProgress: React.FC<BrandProgressProps> = ({ history, onBack })
         </div>
         
         <div className="bg-paper-2 border border-ink/10 rounded-2xl p-6 flex items-center gap-6">
+          <button 
+            onClick={handleDownloadLatest}
+            disabled={isDownloading}
+            className="p-3 bg-white border border-ink/10 rounded-full text-ink hover:bg-gold hover:text-white transition-all disabled:opacity-50"
+            title="Download Latest Audit PDF"
+          >
+            {isDownloading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+          </button>
           <div className="flex flex-col">
             <span className="text-[10px] font-bold uppercase tracking-widest text-ink-3">Latest Score</span>
             <span className="text-3xl font-serif text-ink">{latestScore}</span>
@@ -155,14 +178,14 @@ export const BrandProgress: React.FC<BrandProgressProps> = ({ history, onBack })
       <div className="mt-12">
         <h3 className="text-sm font-bold tracking-widest uppercase text-ink mb-6">Audit Log</h3>
         <div className="space-y-4">
-          {history.map((audit, i) => (
+          {(history || []).map((audit, i) => (
             <div key={audit.id} className="bg-white border border-ink/10 rounded-xl p-4 flex items-center justify-between">
               <div className="flex items-center gap-4">
                 <div className="w-10 h-10 rounded-full bg-paper-2 flex items-center justify-center text-xs font-bold text-ink">
                   {history.length - i}
                 </div>
                 <div>
-                  <div className="text-sm font-bold text-ink">{audit.userData.brandName}</div>
+                  <div className="text-sm font-bold text-ink">{audit?.userData?.brandName}</div>
                   <div className="text-[10px] text-ink-3 uppercase tracking-widest">
                     {new Date(audit.timestamp).toLocaleDateString('en-KE', { day: 'numeric', month: 'long', year: 'numeric' })}
                   </div>
@@ -170,8 +193,8 @@ export const BrandProgress: React.FC<BrandProgressProps> = ({ history, onBack })
               </div>
               <div className="flex items-center gap-6">
                 <div className="text-right">
-                  <div className="text-xs font-bold text-ink">{audit.auditData.overall_score}/100</div>
-                  <div className="text-[9px] text-ink-3 uppercase tracking-widest">{audit.auditData.score_label}</div>
+                  <div className="text-xs font-bold text-ink">{audit?.auditData?.overall_score}/100</div>
+                  <div className="text-[9px] text-ink-3 uppercase tracking-widest">{audit?.auditData?.score_label}</div>
                 </div>
               </div>
             </div>
